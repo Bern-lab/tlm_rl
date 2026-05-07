@@ -184,11 +184,21 @@ class PPO:
         if not self.normalize_advantage_per_mini_batch:
             st.advantages = (st.advantages - st.advantages.mean()) / (st.advantages.std() + 1e-8)
 
+    def _compute_additional_loss(
+        self,
+        batch: RolloutStorage.Batch,
+        original_batch_size: int,
+        distribution_params: tuple[torch.Tensor, ...],
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Compute optional algorithm-specific loss terms."""
+        return torch.zeros((), device=self.device), {}
+
     def update(self) -> dict[str, float]:
         """Run optimization epochs over stored batches and return mean losses."""
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_entropy = 0
+        mean_additional_losses: dict[str, float] = {}
         # RND loss
         mean_rnd_loss = 0 if self.rnd else None
         # Symmetry loss
@@ -283,6 +293,12 @@ class PPO:
                 if self.symmetry.use_mirror_loss:
                     loss = loss + self.symmetry.mirror_loss_coeff * symmetry_loss
 
+            # Additional algorithm-specific loss terms
+            additional_loss, additional_loss_dict = self._compute_additional_loss(
+                batch, original_batch_size, distribution_params
+            )
+            loss = loss + additional_loss
+
             # Compute the gradients for PPO
             self.optimizer.zero_grad()
             loss.backward()
@@ -313,12 +329,17 @@ class PPO:
             # Symmetry loss
             if mean_symmetry_loss is not None:
                 mean_symmetry_loss += symmetry_loss.item()
+            # Additional algorithm-specific losses
+            for name, value in additional_loss_dict.items():
+                mean_additional_losses[name] = mean_additional_losses.get(name, 0.0) + value
 
         # Divide the losses by the number of updates
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_entropy /= num_updates
+        for name in mean_additional_losses:
+            mean_additional_losses[name] /= num_updates
         if mean_rnd_loss is not None:
             mean_rnd_loss /= num_updates
         if mean_symmetry_loss is not None:
@@ -334,6 +355,7 @@ class PPO:
             loss_dict["rnd"] = mean_rnd_loss
         if self.symmetry:
             loss_dict["symmetry"] = mean_symmetry_loss
+        loss_dict.update(mean_additional_losses)
 
         # Clear the storage
         self.storage.clear()
