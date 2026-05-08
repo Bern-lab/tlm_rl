@@ -106,7 +106,12 @@ class PPOTeacherKL(PPO):
             self.teacher_kl_cfg["schedule"] = self.teacher_kl_schedule
 
     def get_teacher_kl_lambda(self) -> float:
-        """Return the current teacher-KL loss weight."""
+        """Return the current teacher-KL loss weight.
+
+        Warmup takes precedence over all schedules. After warmup, ``constant`` keeps
+        ``lambda_start`` fixed, ``linear`` and ``cosine`` anneal toward ``lambda_end``,
+        and ``constant_then_linear`` holds ``lambda_start`` before linear annealing.
+        """
         if self.teacher_kl_iteration < self.teacher_kl_warmup_iters:
             return 0.0
 
