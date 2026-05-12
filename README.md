@@ -1,67 +1,71 @@
-# TLM-RL: Modified RSL-RL
+# TLM-RL: PPO Teacher-KL Regularization
 
-**TLM-RL** is a modified version of [RSL-RL](https://github.com/leggedrobotics/rsl_rl), a GPU-accelerated, lightweight
-learning library for robotics research. This fork keeps the compact PPO training pipeline of RSL-RL while focusing on
-sequence-aware policy and value networks.
+**TLM-RL** is a small fork of [RSL-RL](https://github.com/leggedrobotics/rsl_rl) focused on PPO training with frozen
+teacher KL regularization.
 
-The main modification is replacing the default feed-forward MLP policy/value networks with Transformer- and LSTM-based
-architectures. This is useful for tasks where the policy benefits from temporal context, partial observability, or
-history-dependent robot behavior.
-
-## Key Features
-
-- **Minimal, readable codebase** with clear extension points for rapid prototyping.
-- **Robotics-first methods** including PPO and Student-Teacher Distillation.
-- **High-throughput training** with native Multi-GPU support.
-- **Sequence-aware models** using Transformer and LSTM architectures instead of the default MLP networks.
-- **Proven performance** in numerous research publications.
-
-## Learning Environments
-
-RSL-RL is currently used by the following robot learning libraries:
-
-- [Isaac Lab](https://github.com/isaac-sim/IsaacLab) (built on top of NVIDIA Isaac Sim)
-- [Legged Gym](https://github.com/leggedrobotics/legged_gym) (built on top of NVIDIA Isaac Gym)
-- [mjlab](https://github.com/mujocolab/mjlab) (built on top of MuJoCo Warp)
-- [MuJoCo Playground](https://github.com/google-deepmind/mujoco_playground) (built on top of MuJoCo MJX and Warp)
-
-## Installation
-
-Before installing RSL-RL, ensure that Python `3.9+` is available. It is recommended to install the library in a virtual
-environment (e.g. using `venv` or `conda`), which is often already created by the used environment library (e.g.
-Isaac Lab). If so, make sure to activate it before installing RSL-RL.
-
-### Installing the original RSL-RL package
-
-```bash
-pip install rsl-rl-lib
-```
-
-### Installing this modified version for development
-
-```bash
-git clone https://github.com/Bern-lab/tlm_rl.git
-cd tlm_rl
-pip install -e .
-```
-
-## Citation
-
-If you use RSL-RL in your research, please cite the [paper](https://arxiv.org/abs/2509.10771):
+The added training path keeps the student actor in the normal PPO loop: the student samples actions, controls the
+environment, stores rollouts, and is optimized by PPO. During `update()`, a frozen teacher actor reads the `teacher`
+observation group, computes its action distribution, and adds:
 
 ```text
-@article{schwarke2025rslrl,
-  title={RSL-RL: A Learning Library for Robotics Research},
-  author={Schwarke, Clemens and Mittal, Mayank and Rudin, Nikita and Hoeller, David and Hutter, Marco},
-  journal={arXiv preprint arXiv:2509.10771},
-  year={2025}
-}
+loss += lambda(t) * KL(teacher || student)
 ```
+
+## Main Changes
+
+- Added `PPOTeacherKL`, a PPO variant with a frozen teacher actor.
+- Added teacher checkpoint loading from `actor_state_dict`.
+- Added `actor` / `critic` / `teacher` observation group support.
+- Added configurable teacher-KL schedules: `linear`, `cosine`, `constant`, and `constant_then_linear`.
+- Added warmup, KL clipping, finite checks, distribution-shape checks, and teacher-KL logging.
+- Added checkpoint metadata for teacher-KL state and resume-safe KL schedule progress.
+
+## Expected Observation Interface
+
+The environment should provide stable observation keys:
+
+```text
+obs["actor"]    -> student actor input
+obs["critic"]   -> critic input
+obs["teacher"]  -> frozen teacher actor input
+```
+
+The teacher observation must match the actor observation used when training the teacher checkpoint: same terms, order,
+dimensions, scaling, clipping, history length, and sensor settings.
+
+## Example Configuration
+
+```yaml
+obs_groups:
+  actor: ["actor"]
+  critic: ["critic"]
+  teacher: ["teacher"]
+
+algorithm:
+  class_name: PPOTeacherKL
+  teacher_kl_cfg:
+    checkpoint_path: /abs/path/to/teacher/model.pt
+    lambda_start: 1.0
+    lambda_end: 0.0
+    warmup_iters: 0
+    constant_iters: 0
+    anneal_iters: 3000
+    schedule: cosine
+    max_kl_loss: 10.0
+    check_shapes: true
+    fail_on_nonfinite_kl: true
+    log_kl_when_lambda_zero: true
+```
+
+## Download
+
+For the upstream RSL-RL package and installation instructions, see
+[leggedrobotics/rsl_rl](https://github.com/leggedrobotics/rsl_rl).
+
+## Roadmap
+
+Transformer-based policy components are expected to be made public next month.
 
 ## License
 
-This project is a modified version of RSL-RL and follows the BSD 3-Clause license. See [LICENSE](LICENSE) for the full
-license text and `licenses/dependencies/` for third-party dependency license information.
-
-Please retain the original RSL-RL copyright and citation notices when redistributing or publishing work based on this
-repository.
+This project follows the BSD 3-Clause license inherited from RSL-RL. See [LICENSE](LICENSE).
